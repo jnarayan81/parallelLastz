@@ -1,5 +1,5 @@
 # Write you comments here with "#"
-# You can write all lastz parameters here EXECPT --output (if you wanna change it then see script line number 85)
+# You can write all lastz parameters here EXECPT --output (if you wanna change it then see script line number 84)
 # The outfile will be named after each fasta sequence name
 # Write all command in newline
 
