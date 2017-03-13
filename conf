@@ -1,0 +1,10 @@
+# Write you comments here with "#"
+# You can write all lastz parameters here EXECPT --output (if you wanna change it then see script line number 85)
+# The outfile will be named after each fasta sequence name
+# Write all command in newline
+
+--chain
+--format=general- 
+--progress 
+--ambiguous=iupac 
+--identity=90
