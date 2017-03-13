@@ -125,7 +125,7 @@ sub help {
   print "	--qfile|-q	query multifasta/fasta file\n";
   print "	--tfile|-t	target genome file\n";
   print "	--cfile|-c	config file\n";
-  print "	--sppedup|-s	number of core to use\n";
+  print "	--speedup|-s	number of core to use\n";
   print "     	--help|-h	brief help message\n";
 
 exit;
