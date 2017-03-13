@@ -120,7 +120,7 @@ sub help {
   my $ver = $_[0];
   print "\n parallelLastz $ver\n\n";
 
-  print "Usage: $0 --qfile <> --tfile <> --core <#> \n\n";
+  print "Usage: $0 --qfile <> --tfile <> --cfile <> --core <#> \n\n";
   print	"Options:\n";
   print "	--qfile|-q	query multifasta/fasta file\n";
   print "	--tfile|-t	target genome file\n";
