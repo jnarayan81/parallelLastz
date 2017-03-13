@@ -1,6 +1,6 @@
 # Write you comments here with "#"
 # You can write all lastz parameters here EXECPT --output (if you wanna change it then see script line number 84)
-# Do not use sequence[multiple], this script do it by one chromosome/scaffolds/contig/sequence at a time
+# Do not use seq.fa[multiple], this script do it by one chromosome/scaffolds/contig/sequence at a time
 # The outfile will be named after each fasta sequence name:  seeALN_<name>.lz
 # Write all command in newline
 
