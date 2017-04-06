@@ -11,7 +11,7 @@ use Bio::SeqIO;
 
 #Author: Jitendra Narayan
 #Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread>
-#Change the Lastz parameters at Line:81
+#Change the Lastz parameters at Line:84
 
 my ($qfile, $tfile, $config, $thread, $debug, $help, $man);
 my $version=0.1;
