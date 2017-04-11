@@ -3,12 +3,33 @@
 # Do not use seq.fa[multiple], this script do it by one chromosome/scaffolds/contig/sequence at a time
 # The outfile will be named after each fasta sequence name:  seeALN_<name>.lz
 # Write all command in newline
+#You can find detail of parameters here http://www.bx.psu.edu/miller_lab/dist/README.lastz-1.02.00/README.lastz-1.02.00a.html
 
 #For chain only
 --chain
+
+#Outfile format ‑‑format=general for tabbed file; 
+#Use can also use plotted using the ‑‑format=rdotplot output option and the R statistical package.
 --format=general- 
---progress 
---ambiguous=iupac
+--progress
 
 #Identity here
 --identity=90
+
+#Coverage
+#‑‑coverage=90
+
+#Ambiguous to take care of N or ambiguous=n
+‑‑ambiguous=iupac
+
+#Using ‑‑step=10, we will only be looking for seeds at every 10th base
+#‑‑step=10
+
+#Use ‑‑exact=20 so that a 20-base exact match is required to qualify as an HSP
+#‑‑exact=20
+
+#The stricter ‑‑match=1,5. This scores matching bases as +1 and mismatches as −5
+#‑‑match=1,5
+
+#Check the trand  ‑‑strand=minus  ‑‑strand=plus
+#‑‑strand=both
