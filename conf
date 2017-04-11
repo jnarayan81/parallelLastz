@@ -3,7 +3,7 @@
 # Do not use seq.fa[multiple], this script do it by one chromosome/scaffolds/contig/sequence at a time
 # The outfile will be named after each fasta sequence name:  seeALN_<name>.lz
 # Write all command in newline
-#You can find detail of parameters here http://www.bx.psu.edu/miller_lab/dist/README.lastz-1.02.00/README.lastz-1.02.00a.html
+# You can find detail of parameters here http://www.bx.psu.edu/miller_lab/dist/README.lastz-1.02.00/README.lastz-1.02.00a.html
 
 #For chain only
 --chain
