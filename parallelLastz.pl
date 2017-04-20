@@ -10,7 +10,7 @@ use Parallel::ForkManager;
 use Bio::SeqIO;
 
 #Author: Jitendra Narayan
-#Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread>
+#Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread> <length>
 #Change the Lastz parameters at Line:84
 
 my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length);
