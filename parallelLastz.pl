@@ -13,13 +13,14 @@ use Bio::SeqIO;
 #Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread>
 #Change the Lastz parameters at Line:84
 
-my ($qfile, $tfile, $config, $thread, $debug, $help, $man);
+my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length);
 my $version=0.1;
 GetOptions(
     'qfile|q=s' => \$qfile,
     'tfile|t=s' => \$tfile,
     'cfile|c=s' => \$config,
     'speedup|s=i' => \$thread,
+    'length|l=i' => \$length,
     'help|h' => \$help
 ) or die &help($version);
 &help($version) if $help;
@@ -65,6 +66,7 @@ while(my$seqobj = $seqio->next_seq) {
 
   NAMES:
   foreach my $child ( 0 .. $#names ) {
+    next if length($sequences{$names[$child]}) <= $length;
     my $pid = $pm->start($names[$child]) and next NAMES;
     runLastz($names[$child]);
     $pm->finish($child); # pass an exit code to finish
@@ -126,6 +128,7 @@ sub help {
   print "	--tfile|-t	target genome file\n";
   print "	--cfile|-c	config file\n";
   print "	--speedup|-s	number of core to use\n";
+  print "	--length|-l	length below this is ignored\n";
   print "     	--help|-h	brief help message\n";
 
 exit;
