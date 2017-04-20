@@ -10,5 +10,6 @@ perl parallelLastz.pl -h for more help
 --tfile|-t	target genome file
 --cfile|-c	config file
 --speedup|-s	number of core to use
+--length|-l	length below this is ignored
 --help|-h	brief help message
 ```
