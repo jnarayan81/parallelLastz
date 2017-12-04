@@ -13,7 +13,7 @@ use Bio::SeqIO;
 #Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread> <length>
 #Change the Lastz parameters at Line:84
 
-my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length);
+my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $tfile_corrected);
 my $version=0.1;
 GetOptions(
     'qfile|q=s' => \$qfile,
@@ -21,6 +21,7 @@ GetOptions(
     'cfile|c=s' => \$config,
     'speedup|s=i' => \$thread,
     'length|l=i' => \$length,
+    'unmask|u' => \$unmask,
     'help|h' => \$help
 ) or die &help($version);
 &help($version) if $help;
@@ -30,6 +31,12 @@ if (!$qfile or !$tfile or !$config) { help($version) }
 if (!$thread) { $thread = `grep -c -P '^processor\\s+:' /proc/cpuinfo` }
 my $parameters = readConfig ($config);
 my $param = join (' ', @$parameters);
+
+if ($unmask) {
+$tfile_corrected='tmpUC';
+convertUC($tfile, $tfile_corrected);
+$tfile = $tfile_corrected;
+}
 
 my %sequences;
 my $seqio = Bio::SeqIO->new(-file => "$qfile", -format => "fasta");
@@ -77,13 +84,17 @@ while(my$seqobj = $seqio->next_seq) {
 
 sub runLastz {
 my $name=shift;
-my $seq=$sequences{$name};
+my $seq;
+if ($unmask) { $seq=uc($sequences{$name}); } else { $seq=$sequences{$name}; } # It will ignore maksing -- see unmask
 # remove the file when the reference goes away with the UNLINK option
 	my $tmp_fh = new File::Temp( UNLINK => 1 );
 	print $tmp_fh ">$name\n$seq\n";
 
         print "Working on $name sequence\n";
-	my $myLASTZ="lastz $tmp_fh $tfile --output=seeALN_$name.lz $param";
+	my $myLASTZ;
+	if ($unmask) { $myLASTZ="lastz $tmp_fh $tfile_corrected --output=seeALN_$name.lz $param"; }
+	else { $myLASTZ="lastz $tmp_fh $tfile --output=seeALN_$name.lz $param"; }
+	
         system ("$myLASTZ");
 
 }
@@ -117,6 +128,36 @@ sub read_fh {
     return $filehandle;
 }
 
+#Open and Read a file
+sub write_fh {
+    my $filename = shift @_;
+    my $filehandle;
+    if ($filename =~ /gz$/) {
+        open $filehandle, "gunzip -dc $filename |" or die $!;
+    }
+    else {
+        open $filehandle, ">$filename" or die $!;
+    }
+    return $filehandle;
+}
+
+
+#Read config files
+sub convertUC {
+my ($infile, $outfile) = @_;
+my $fh= read_fh($infile);
+my $ofh= write_fh($outfile);
+while (<$fh>) {
+    #chomp;
+    next if /^#/;
+    next if /^$/;
+    #$_ =~ s/^\s+|\s+$//g;
+    print $ofh uc($_);
+}
+close $fh or die "Cannot close $infile: $!";
+close $ofh or die "Cannot close $outfile: $!";
+}
+
 #Help section
 sub help {
   my $ver = $_[0];
@@ -129,6 +170,7 @@ sub help {
   print "	--cfile|-c	config file\n";
   print "	--speedup|-s	number of core to use\n";
   print "	--length|-l	length below this is ignored\n";
+  print "	--unmask|-u	unmask the lowercase in t and q file\n";
   print "     	--help|-h	brief help message\n";
 
 exit;
