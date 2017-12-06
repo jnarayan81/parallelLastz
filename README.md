@@ -1,5 +1,5 @@
 # parallelLastz
-## blastz with multi-threads support.
+## Lastz with multi-threads support.
 
 Running Lastz (https://github.com/lastz/lastz) in parallel mode. This program is for single computer with multiple core processors.
 
