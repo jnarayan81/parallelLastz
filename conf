@@ -20,7 +20,7 @@
 #‑‑coverage=90
 
 #Ambiguous to take care of N or ambiguous=n
-‑‑ambiguous=iupac
+--ambiguous=iupac
 
 #Using ‑‑step=10, we will only be looking for seeds at every 10th base
 #‑‑step=10
