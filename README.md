@@ -5,7 +5,7 @@ Running Lastz (https://github.com/lastz/lastz) in parallel mode. This program is
 
 When the query file format is fasta, you can specify many threads to process it. It can reduce run time linearly, and use almost equal memory as the original lastz program. This is useful when you lastz a big query file to a huge reference like human whole genome sequence.
 
-The program is an extension on the original lastz program which was written by Bob Harris.
+The program is an extension on the original lastz program which was written by Bob Harris (the LASTZ guy).
 
 parallelLastz can run on Linux and Mac OS.
 
