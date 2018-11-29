@@ -5,6 +5,13 @@
 # Write all command in newline
 # You can find detail of parameters here http://www.bx.psu.edu/miller_lab/dist/README.lastz-1.02.00/README.lastz-1.02.00a.html
 
+#-----------------------------------------------------------------------------------------------------------------
+# Parameters you can use for precise genome location, set below (one flag per line)
+# --gapped --gap=600,150 --hspthresh=4500, --seed=12of19 --notransition --ydrop=15000 --chain 
+#-----------------------------------------------------------------------------------------------------------------
+
+#All LASTZ parameters goes here
+
 #For chain only
 --chain
 
