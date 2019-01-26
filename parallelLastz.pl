@@ -1,18 +1,18 @@
 #!/usr/bin/perl
 
 use strict;
-use 5.010;
+use warnings;
 use Getopt::Long qw(GetOptions);
-Getopt::Long::Configure qw(gnu_getopt);
-use Data::Dumper;
-use Pod::Usage;
 use Parallel::ForkManager;
 use Bio::SeqIO;
+use lib::abs 'lastz';
 
-#Author: Jitendra Narayan
+
+#Author: Jitendra Narayan / jnarayan81@gmail.com
 #Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread> <length>
+#perl parallelLastz.pl -q testDATA/qsample1.fa -t testDATA/tsample.fa -c conf -l 1 -z -w
 
-my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $tfile_corrected);
+my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $tfile_corrected, $wipe, $lastzloc);
 my $version=0.1;
 GetOptions(
     'qfile|q=s' => \$qfile,
@@ -21,12 +21,14 @@ GetOptions(
     'speedup|s=i' => \$thread,
     'length|l=i' => \$length,
     'unmask|u' => \$unmask,
+    'lastzloc|z' => \$lastzloc,
+    'wipe|w' => \$wipe,
     'help|h' => \$help
 ) or die &help($version);
 &help($version) if $help;
 #pod2usage("$0: \nI am afraid, no files given.")  if ((@ARGV == 0) && (-t STDIN));
 
-if (!$qfile or !$tfile or !$config) { help($version) }
+if (!$qfile or !$tfile or !$config or !$length) { help($version) }
 if (!$thread) { $thread = `grep -c -P '^processor\\s+:' /proc/cpuinfo` }
 my $parameters = readConfig ($config);
 my $param = join (' ', @$parameters);
@@ -35,6 +37,20 @@ if ($unmask) {
 $tfile_corrected='tmpUC';
 convertUC($tfile, $tfile_corrected);
 $tfile = $tfile_corrected;
+}
+
+if (!$lastzloc) {
+my $lastZ_tool = "lastz";  # simple example
+my $tool_path = '';
+
+for my $path ( split /:/, $ENV{PATH} ) {
+    if ( -f "$path/$lastZ_tool" && -x _ ) {
+        print "$lastZ_tool found in $path\n";
+        $lastZ_tool = "$path/$lastZ_tool";
+        last;
+    }
+}
+die "No $lastZ_tool command available in your $^O system\nNo worry ! Run again with -z to use inbuild lastz binary\n"; exit unless ( $tool_path );
 }
 
 my %sequences;
@@ -79,22 +95,49 @@ while(my$seqobj = $seqio->next_seq) {
   }
   print "Waiting for all the jobs to complete...\n";
   $pm->wait_all_children;
+
   print "DONE ... Everybody is out of the computation pool!\n";
+
+if ($wipe) {
+  print "Cleaning the intermediate files\n";
+  #Concatenate all alingment files 
+  my @files = ("*.lz");
+  #point to note - glob might create error if large number of files found !!!!
+  my @file_list = glob("@files");
+  catall( \@file_list => 'finalAlign.tsv' );
+  #system("find . -name '*.lz' -exec cat {} \; > finalAlign.tsv");
+  unlink glob "*.lz";
+  print "Alignment DONE :)\n\nFinal results are in finalAlign.tsv\nNOTE: In case you have any warning while concatenating, please run without -w flag and concate all *.lz files by yourself !!\n";
+} else { print "Alignment DONE :)\n\nResults are in *.lz files\nNOTE: you can now concat all *.lz files or explore chromosome of interest individually !\n";}
+
+
+
+
+## - subroutine here ---
+#concat files
+sub catall {
+    system qq( cat "$_" >> "$_[1]" ) for @{$_[0]};
+}
 
 sub runLastz {
 my $name=shift;
 my $seq;
 if ($unmask) { $seq=uc($sequences{$name}); } else { $seq=$sequences{$name}; } # It will ignore maksing -- see unmask
 # remove the file when the reference goes away with the UNLINK option
-	my $tmp_fh = new File::Temp( UNLINK => 1 );
-	print $tmp_fh ">$name\n$seq\n";
-
-        print "Working on $name sequence\n";
-	my $myLASTZ;
-	if ($unmask) { $myLASTZ="lastz $tmp_fh $tfile_corrected --output=seeALN_$name.lz $param"; }
-	else { $myLASTZ="lastz $tmp_fh $tfile --output=seeALN_$name.lz $param"; }
-	
-        system ("$myLASTZ");
+   my $tmp_fh = new File::Temp( UNLINK => 1 );
+   print $tmp_fh ">$name\n$seq\n";
+   my $myLASTZ;
+   print "Working on $name sequence\n";
+	if (!$lastzloc) {
+		if ($unmask) { $myLASTZ="lastz $tmp_fh $tfile_corrected --output=seeALN_$name.lz $param"; }
+		else { $myLASTZ="lastz $tmp_fh $tfile --output=seeALN_$name.lz $param"; }
+		system ("$myLASTZ");
+	}
+	else {
+		if ($unmask) { $myLASTZ="lastz/lastz $tmp_fh $tfile_corrected --output=seeALN_$name.lz $param"; }
+		else { $myLASTZ="lastz/lastz $tmp_fh $tfile --output=seeALN_$name.lz $param"; }
+		system ("$myLASTZ");
+	}
 
 }
 
@@ -170,6 +213,8 @@ sub help {
   print "	--speedup|-s	number of core to use\n";
   print "	--length|-l	length below this is ignored\n";
   print "	--unmask|-u	unmask the lowercase in t and q file\n";
+  print "	--lastzloc|-z	use the inbuild lastz\n";
+  print "	--wipe|-w	wipe out the intermediate files\n";
   print "     	--help|-h	brief help message\n";
 
 exit;
