@@ -23,3 +23,8 @@ perl parallelLastz.pl -h for more help
 ```
 
 Contact me at jnarayan81@gmail.com
+
+# Citation
+Harris, R.S. (2007) Improved pairwise alignment of genomic DNA. Ph.D. Thesis, The Pennsylvania State University.
+
+Feel free to give a likes to this repository for encouragements. 
