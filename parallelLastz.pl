@@ -12,7 +12,7 @@ use lib::abs 'lastz';
 #Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread> <length>
 #perl parallelLastz.pl -q testDATA/qsample1.fa -t testDATA/tsample.fa -c conf -l 1 -z -w
 
-my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $tfile_corrected, $wipe, $lastzloc);
+my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $qfile_corrected, $wipe, $lastzloc);
 my $version=0.1;
 GetOptions(
     'qfile|q=s' => \$qfile,
@@ -34,9 +34,9 @@ my $parameters = readConfig ($config);
 my $param = join (' ', @$parameters);
 
 if ($unmask) {
-$tfile_corrected='tmpUC';
-convertUC($tfile, $tfile_corrected);
-$tfile = $tfile_corrected;
+$qfile_corrected='tmpUC';
+convertUC($qfile, $qfile_corrected);
+$qfile = $qfile_corrected;
 }
 
 if (!$lastzloc) {
@@ -54,7 +54,7 @@ die "No $lastZ_tool command available in your $^O system\nNo worry ! Run again w
 }
 
 my %sequences;
-my $seqio = Bio::SeqIO->new(-file => "$qfile", -format => "fasta");
+my $seqio = Bio::SeqIO->new(-file => "$tfile", -format => "fasta");
 while(my$seqobj = $seqio->next_seq) {
     my $id  = $seqobj->display_id;    # there's your key
     my $seq = $seqobj->seq;           # and there's your value
@@ -129,13 +129,13 @@ if ($unmask) { $seq=uc($sequences{$name}); } else { $seq=$sequences{$name}; } # 
    my $myLASTZ;
    print "Working on $name sequence\n";
 	if (!$lastzloc) {
-		if ($unmask) { $myLASTZ="lastz $tmp_fh $tfile_corrected --output=seeALN_$name.lz $param"; }
-		else { $myLASTZ="lastz $tmp_fh $tfile --output=seeALN_$name.lz $param"; }
+		if ($unmask) { $myLASTZ="lastz $tmp_fh $qfile_corrected --output=seeALN_$name.lz $param"; }
+		else { $myLASTZ="lastz $tmp_fh $qfile --output=seeALN_$name.lz $param"; }
 		system ("$myLASTZ");
 	}
 	else {
-		if ($unmask) { $myLASTZ="lastz/lastz $tmp_fh $tfile_corrected --output=seeALN_$name.lz $param"; }
-		else { $myLASTZ="lastz/lastz $tmp_fh $tfile --output=seeALN_$name.lz $param"; }
+		if ($unmask) { $myLASTZ="lastz/lastz $tmp_fh $qfile_corrected --output=seeALN_$name.lz $param"; }
+		else { $myLASTZ="lastz/lastz $tmp_fh $qfile --output=seeALN_$name.lz $param"; }
 		system ("$myLASTZ");
 	}
 
