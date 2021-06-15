@@ -5,14 +5,26 @@ use warnings;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use Bio::SeqIO;
-use lib::abs 'lastz';
+#use lib::abs 'lastz';
 
 
 #Author: Jitendra Narayan / jnarayan81@gmail.com
 #Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread> <length>
-#perl parallelLastz.pl -q testDATA/qsample1.fa -t testDATA/tsample.fa -c conf -l 1 -z -w
+#perl parallelLastz.pl -q testDATA/qsample1.fa -t testDATA/tsample.fa -c conf -s 4  -w -l 10
 
-my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $qfile_corrected, $wipe, $lastzloc);
+print <<'WELCOME';
+                       _ _      _   __           _       
+ _ __   __ _ _ __ __ _| | | ___| | / /  __ _ ___| |_ ____
+| '_ \ / _` | '__/ _` | | |/ _ \ |/ /  / _` / __| __|_  /
+| |_) | (_| | | | (_| | | |  __/ / /__| (_| \__ \ |_ / / 
+| .__/ \__,_|_|  \__,_|_|_|\___|_\____/\__,_|___/\__/___|v0.1
+|_|                                                      
+parallelLastz: Run lastz jobs in parallel
+Contact: jnarayan81@gmail.com for support
+
+WELCOME
+
+my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $qfile_corrected, $wipe);
 my $version=0.1;
 GetOptions(
     'qfile|q=s' => \$qfile,
@@ -20,8 +32,6 @@ GetOptions(
     'cfile|c=s' => \$config,
     'speedup|s=i' => \$thread,
     'length|l=i' => \$length,
-    'unmask|u' => \$unmask,
-    'lastzloc|z' => \$lastzloc,
     'wipe|w' => \$wipe,
     'help|h' => \$help
 ) or die &help($version);
@@ -39,19 +49,19 @@ convertUC($qfile, $qfile_corrected);
 $qfile = $qfile_corrected;
 }
 
-if (!$lastzloc) {
+
 my $lastZ_tool = "lastz";  # simple example
-my $tool_path = '';
+my $tool_path = ''; my $gotu=0;
 
 for my $path ( split /:/, $ENV{PATH} ) {
     if ( -f "$path/$lastZ_tool" && -x _ ) {
         print "$lastZ_tool found in $path\n";
         $lastZ_tool = "$path/$lastZ_tool";
-        last;
+        $gotu=1;
+	last; 
     }
 }
-die "No $lastZ_tool command available in your $^O system\nNo worry ! Run again with -z to use inbuild lastz binary\n"; exit unless ( $tool_path );
-}
+if ($gotu == 0) { die "No $lastZ_tool command available in your $^O system\nTry installing using conda 'conda install -c bioconda lastz'\n"; exit unless ( $tool_path ); }
 
 my %sequences;
 my $seqio = Bio::SeqIO->new(-file => "$tfile", -format => "fasta");
@@ -128,17 +138,9 @@ if ($unmask) { $seq=uc($sequences{$name}); } else { $seq=$sequences{$name}; } # 
    print $tmp_fh ">$name\n$seq\n";
    my $myLASTZ;
    print "Working on $name sequence\n";
-	if (!$lastzloc) {
 		if ($unmask) { $myLASTZ="lastz $tmp_fh $qfile_corrected --output=seeALN_$name.lz $param"; }
 		else { $myLASTZ="lastz $tmp_fh $qfile --output=seeALN_$name.lz $param"; }
 		system ("$myLASTZ");
-	}
-	else {
-		if ($unmask) { $myLASTZ="lastz/lastz $tmp_fh $qfile_corrected --output=seeALN_$name.lz $param"; }
-		else { $myLASTZ="lastz/lastz $tmp_fh $qfile --output=seeALN_$name.lz $param"; }
-		system ("$myLASTZ");
-	}
-
 }
 
 #Read config files
@@ -151,6 +153,7 @@ while (<$fh>) {
     next if /^#/;
     next if /^$/;
     $_ =~ s/^\s+|\s+$//g;
+    if (index($_, 'multiple') != -1) { print "$_ contains 'multiple' settings.\n which is not allowed in parallelLastz\n"; exit;}
     push @lines, $_;
 }
 close $fh or die "Cannot close $file: $!";
@@ -159,8 +162,8 @@ return \@lines;
 
 #Open and Read a file
 sub read_fh {
-    my $filename = shift @_;
-    my $filehandle;
+my $filename = shift @_;
+my $filehandle;
     if ($filename =~ /gz$/) {
         open $filehandle, "gunzip -dc $filename |" or die $!;
     }
@@ -172,8 +175,8 @@ sub read_fh {
 
 #Open and Read a file
 sub write_fh {
-    my $filename = shift @_;
-    my $filehandle;
+my $filename = shift @_;
+my $filehandle;
     if ($filename =~ /gz$/) {
         open $filehandle, "gunzip -dc $filename |" or die $!;
     }
@@ -202,20 +205,19 @@ close $ofh or die "Cannot close $outfile: $!";
 
 #Help section
 sub help {
-  my $ver = $_[0];
+my $ver = $_[0];
   print "\n parallelLastz $ver\n\n";
 
   print "Usage: $0 --qfile <> --tfile <> --cfile <> --speedup <#> \n\n";
   print	"Options:\n";
-  print "	--qfile|-q	query multifasta/fasta file\n";
-  print "	--tfile|-t	target genome file\n";
-  print "	--cfile|-c	config file\n";
-  print "	--speedup|-s	number of core to use\n";
-  print "	--length|-l	length below this is ignored\n";
-  print "	--unmask|-u	unmask the lowercase in t and q file\n";
-  print "	--lastzloc|-z	use the inbuild lastz\n";
-  print "	--wipe|-w	wipe out the intermediate files\n";
-  print "     	--help|-h	brief help message\n";
+  print "   --qfile|-q      query multifasta/fasta file\n";
+  print "   --tfile|-t      target genome file\n";
+  print "   --cfile|-c      config file\n";
+  print "   --speedup|-s    number of core to use\n";
+  print "   --length|-l     length below this is ignored\n";
+  print "   --unmask|-u     unmask the lowercase in t and q file\n";
+  print "   --wipe|-w       wipe out the intermediate files\n";
+  print "   --help|-h       brief help message\n";
 
 exit;
 }

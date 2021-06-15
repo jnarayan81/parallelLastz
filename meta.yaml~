@@ -1,0 +1,29 @@
+{% set name = "parallelLastz" %}
+{% set version = "0.1" %}
+
+package:
+  name: "{{ name|lower }}"
+  version: "{{ version }}"
+
+source:
+  url: https://github.com/jnarayan81/parallelLastz.git
+  sha256: bb306b4b4526ba6a880d410c6208a93ddae58e098c9ec7f9fc0ed889d28d3d1d
+
+#build:
+  #number: 0
+  #script: perl
+  
+requirements:
+  host:
+    - perl
+    - lastz
+
+  run:
+    - perl
+    - lastz
+
+about:
+  home: https://github.com/jnarayan81/parallelLastz
+  license: BSD
+  license_family: BSD
+  summary: Run lastz jobs in parallel
