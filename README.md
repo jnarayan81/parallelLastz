@@ -1,4 +1,4 @@
-# parallelLastz
+# parallelLastz v0.2
 ## Lastz with multi-threads support.
 
 [![Conda](https://anaconda.org/jnarayan81/parallellastz/badges/installer/conda.svg)](https://anaconda.org/jnarayan81/parallellastz)
@@ -18,12 +18,20 @@ It run lastz in parallel mode and generate <chr>.lz (tab file) file.
 perl parallelLastz.pl -h for more help
 
 ```
---qfile|-q	query multifasta/fasta file
---tfile|-t	target genome file
---cfile|-c	config file
---speedup|-s	number of core to use
---length|-l	length below this is ignored
---help|-h	brief help message
+Usage: parallelLastz.pl --qfile <> --tfile <> --cfile <> --speedup <#>
+Options:
+   --qfile|-q      Query multifasta/fasta file
+   --tfile|-t      Target genome file
+   --cfile|-c      Config file
+   --speedup|-s    Number of cores to use
+   --length|-l     Minimum length of sequences to process
+   --unmask|-u     Unmask lowercase in target and query files
+   --wipe|-w       Wipe intermediate files
+   --verbose|-v    Enable verbose logging
+   --retry|-r      Number of retry attempts for failed jobs
+   --output|-o     Output directory for saving results
+   --help|-h       Show this help message
+
 ```
 
 ## Conda
