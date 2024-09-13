@@ -5,219 +5,291 @@ use warnings;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use Bio::SeqIO;
-#use lib::abs 'lastz';
+use File::Temp;
+use File::Spec;
+use Term::ProgressBar;
+use Log::Dispatch;
 
-
-#Author: Jitendra Narayan / jnarayan81@gmail.com
-#Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread> <length>
-#perl parallelLastz.pl -q testDATA/qsample1.fa -t testDATA/tsample.fa -c conf -s 4  -w -l 10
+# Author: Jitendra Narayan / jnarayan81@gmail.com
+# Usage: perl parallelLastz.pl <multi_fasta_qfile> <tfile> <cfile> <thread> <length>
+# perl parallelLastz.pl -q testDATA/qsample1.fa -t testDATA/tsample.fa -c conf -s 4 -w -l 10
 
 print <<'WELCOME';
                        _ _      _   __           _       
  _ __   __ _ _ __ __ _| | | ___| | / /  __ _ ___| |_ ____
 | '_ \ / _` | '__/ _` | | |/ _ \ |/ /  / _` / __| __|_  /
 | |_) | (_| | | | (_| | | |  __/ / /__| (_| \__ \ |_ / / 
-| .__/ \__,_|_|  \__,_|_|_|\___|_\____/\__,_|___/\__/___|v0.1
+| .__/ \__,_|_|  \__,_|_|_|\___|_\____/\__,_|___/\__/___|v0.2
 |_|                                                      
 parallelLastz: Run lastz jobs in parallel
 Contact: jnarayan81@gmail.com for support
 
 WELCOME
 
-my ($qfile, $tfile, $config, $thread, $debug, $help, $man, $length, $unmask, $qfile_corrected, $wipe);
-my $version=0.1;
+# Variables declaration
+my ($qfile, $tfile, $config, $thread, $length, $wipe, $help, $unmask, $verbose, $retry, $output_dir);
+my $version = 0.2;
+
+# Parse command line options
 GetOptions(
-    'qfile|q=s' => \$qfile,
-    'tfile|t=s' => \$tfile,
-    'cfile|c=s' => \$config,
-    'speedup|s=i' => \$thread,
-    'length|l=i' => \$length,
-    'wipe|w' => \$wipe,
-    'help|h' => \$help
-) or die &help($version);
-&help($version) if $help;
-#pod2usage("$0: \nI am afraid, no files given.")  if ((@ARGV == 0) && (-t STDIN));
+    'qfile|q=s'        => \$qfile,
+    'tfile|t=s'        => \$tfile,
+    'cfile|c=s'        => \$config,
+    'speedup|s=i'      => \$thread,
+    'length|l=i'       => \$length,
+    'wipe|w'           => \$wipe,
+    'unmask|u'         => \$unmask,
+    'verbose|v'        => \$verbose,
+    'retry|r=i'        => \$retry,
+    'output|o=s'       => \$output_dir,
+    'help|h'           => \$help
+) or die usage($version);
+usage($version) if $help;
 
-if (!$qfile or !$tfile or !$config or !$length) { help($version) }
-if (!$thread) { $thread = `grep -c -P '^processor\\s+:' /proc/cpuinfo` }
-my $parameters = readConfig ($config);
-my $param = join (' ', @$parameters);
+# Validate mandatory inputs
+my @missing;
+push @missing, 'query file (--qfile or -q)' unless $qfile;
+push @missing, 'target file (--tfile or -t)' unless $tfile;
+push @missing, 'config file (--cfile or -c)' unless $config;
+push @missing, 'length (--length or -l)' unless $length;
 
+if (@missing) {
+    print "Error: Missing the following required option(s):\n";
+    print " - $_\n" for @missing;
+    exit;
+}
+
+$thread ||= `grep -c '^processor' /proc/cpuinfo` || 1;
+$output_dir ||= '.';
+mkdir $output_dir unless -d $output_dir;
+
+$retry ||= 1;
+$verbose ||= 0;
+
+# Initialize logging
+my $logger = Log::Dispatch->new(
+    outputs => [
+        ['Screen', min_level => 'info', newline => 1]
+    ]
+);
+
+# Read configuration file
+my $parameters = readConfig($config);
+my $param = join(' ', @$parameters);
+
+# Optionally convert query file to uppercase
 if ($unmask) {
-$qfile_corrected='tmpUC';
-convertUC($qfile, $qfile_corrected);
-$qfile = $qfile_corrected;
+    my $qfile_corrected = File::Spec->catfile($output_dir, 'tmpUC');
+    convertToUpperCase($qfile, $qfile_corrected);
+    $qfile = $qfile_corrected;
 }
 
+# Locate lastz binary
+my $lastZ_tool = locateLastz() or die "No lastz command found.\nTry installing it using conda: 'conda install -c bioconda lastz'\n";
 
-my $lastZ_tool = "lastz";  # simple example
-my $tool_path = ''; my $gotu=0;
+# Load sequences from target file
+my %sequences = loadSequences($tfile);
 
-for my $path ( split /:/, $ENV{PATH} ) {
-    if ( -f "$path/$lastZ_tool" && -x _ ) {
-        print "$lastZ_tool found in $path\n";
-        $lastZ_tool = "$path/$lastZ_tool";
-        $gotu=1;
-	last; 
-    }
-}
-if ($gotu == 0) { die "No $lastZ_tool command available in your $^O system\nTry installing using conda 'conda install -c bioconda lastz'\n"; exit unless ( $tool_path ); }
+# Initialize parallel processing
+my $pm = Parallel::ForkManager->new($thread);
 
-my %sequences;
-my $seqio = Bio::SeqIO->new(-file => "$tfile", -format => "fasta");
-while(my$seqobj = $seqio->next_seq) {
-    my $id  = $seqobj->display_id;    # there's your key
-    my $seq = $seqobj->seq;           # and there's your value
-    $sequences{$id} = $seq;
-}
+# Initialize progress bar
+my $progress = Term::ProgressBar->new({
+    name   => 'Processing',
+    count  => scalar(keys %sequences),
+    fh     => \*STDOUT
+});
 
-  my $max_procs = $thread;
-  my @names = keys %sequences;
-  # hash to resolve PID's back to child specific information
-  my $pm =  new Parallel::ForkManager($max_procs);
-  # Setup a callback for when a child finishes up so we can
-  # get it's exit code
-  $pm->run_on_finish (
-    sub { my ($pid, $exit_code, $ident) = @_;
-      #print "** $ident just got out of the pool ". "with PID $pid and exit code: $exit_code\n";
-    }
-  );
-
-  $pm->run_on_start(
-    sub { my ($pid,$ident)=@_;
-     #print "** $ident started, pid: $pid\n";
-    }
-  );
-
-  $pm->run_on_wait(
+$pm->run_on_finish(
     sub {
-      #print "** Have to wait for one children ...\n"
-    },
-    0.5
-  );
+        my ($pid, $exit_code, $ident) = @_;
+        $progress->update();  # Update progress bar
+        if ($verbose) {
+            $logger->info("Process $ident finished with exit code $exit_code.");
+        }
+    }
+);
 
-  NAMES:
-  foreach my $child ( 0 .. $#names ) {
-    next if length($sequences{$names[$child]}) <= $length;
-    my $pid = $pm->start($names[$child]) and next NAMES;
-    runLastz($names[$child]);
-    $pm->finish($child); # pass an exit code to finish
-  }
-  print "Waiting for all the jobs to complete...\n";
-  $pm->wait_all_children;
+$pm->run_on_start(
+    sub {
+        my ($pid, $ident) = @_;
+        $logger->info("Process $ident started with PID $pid.") if $verbose;
+    }
+);
 
-  print "DONE ... Everybody is out of the computation pool!\n";
+# Process each sequence in parallel
+foreach my $id (keys %sequences) {
+    next if length($sequences{$id}) <= $length;
+    
+    my $pid = $pm->start($id) and next;
+    my $attempts = 0;
+    my $success = 0;
+    
+    while ($attempts < $retry && !$success) {
+        eval {
+            runLastz($id, $sequences{$id}, $qfile, $param, $unmask, $lastZ_tool, $output_dir);
+            $success = 1;
+        };
+        if ($@) {
+            $logger->error("Error running lastz for $id: $@");
+            $attempts++;
+            sleep 1;  # Wait before retrying
+        }
+    }
+    
+    $pm->finish if $success;
+    if (!$success) {
+        $logger->error("Failed to process $id after $retry attempts.");
+    }
+}
 
+# Wait for all jobs to complete
+$pm->wait_all_children;
+$logger->info("All jobs completed.");
+
+# Optional: Clean up intermediate files
 if ($wipe) {
-  print "Cleaning the intermediate files\n";
-  #Concatenate all alingment files 
-  my @files = ("*.lz");
-  #point to note - glob might create error if large number of files found !!!!
-  my @file_list = glob("@files");
-  catall( \@file_list => 'finalAlign.tsv' );
-  #system("find . -name '*.lz' -exec cat {} \; > finalAlign.tsv");
-  unlink glob "*.lz";
-  print "Alignment DONE :)\n\nFinal results are in finalAlign.tsv\nNOTE: In case you have any warning while concatenating, please run without -w flag and concate all *.lz files by yourself !!\n";
-} else { print "Alignment DONE :)\n\nResults are in *.lz files\nNOTE: you can now concat all *.lz files or explore chromosome of interest individually !\n";}
-
-
-
-
-## - subroutine here ---
-#concat files
-sub catall {
-    system qq( cat "$_" >> "$_[1]" ) for @{$_[0]};
+    cleanUpIntermediateFiles($output_dir);
+    $logger->info("Alignment completed. Final results are in 'finalAlign.tsv'.");
+} else {
+    $logger->info("Alignment completed. Check the individual '.lz' files in $output_dir.");
 }
 
+# Subroutines
+
+# Usage message
+sub usage {
+    my $ver = shift;
+    print "\n parallelLastz v$ver\n";
+    print "Usage: $0 --qfile <> --tfile <> --cfile <> --speedup <#>\n";
+    print "Options:\n";
+    print "   --qfile|-q      Query multifasta/fasta file\n";
+    print "   --tfile|-t      Target genome file\n";
+    print "   --cfile|-c      Config file\n";
+    print "   --speedup|-s    Number of cores to use\n";
+    print "   --length|-l     Minimum length of sequences to process\n";
+    print "   --unmask|-u     Unmask lowercase in target and query files\n";
+    print "   --wipe|-w       Wipe intermediate files\n";
+    print "   --verbose|-v    Enable verbose logging\n";
+    print "   --retry|-r      Number of retry attempts for failed jobs\n";
+    print "   --output|-o     Output directory for saving results\n";
+    print "   --help|-h       Show this help message\n";
+    exit;
+}
+
+# Read sequences from a fasta file
+sub loadSequences {
+    my ($filename) = @_;
+    my %sequences;
+    my $seqio = Bio::SeqIO->new(-file => $filename, -format => "fasta");
+
+    while (my $seqobj = $seqio->next_seq) {
+        my $id  = $seqobj->display_id;
+        my $seq = $seqobj->seq;
+        
+        # Replace spaces in the header with underscores
+        $id =~ s/\s/_/g;
+        
+        $sequences{$id} = $seq;
+    }
+
+    return %sequences;
+}
+
+
+# Run lastz for a specific sequence
 sub runLastz {
-my $name=shift;
-my $seq;
-if ($unmask) { $seq=uc($sequences{$name}); } else { $seq=$sequences{$name}; } # It will ignore maksing -- see unmask
-# remove the file when the reference goes away with the UNLINK option
-   my $tmp_fh = new File::Temp( UNLINK => 1 );
-   print $tmp_fh ">$name\n$seq\n";
-   my $myLASTZ;
-   print "Working on $name sequence\n";
-		if ($unmask) { $myLASTZ="lastz $tmp_fh $qfile_corrected --output=seeALN_$name.lz $param"; }
-		else { $myLASTZ="lastz $tmp_fh $qfile --output=seeALN_$name.lz $param"; }
-		system ("$myLASTZ");
+    my ($name, $seq, $qfile, $param, $unmask, $lastZ_tool, $output_dir) = @_;
+    $logger->info("Processing $name...");
+
+    # Create a temporary file for the sequence
+    my $tmp_fh = File::Temp->new(UNLINK => 1);
+    print $tmp_fh ">$name\n$seq\n";
+    close $tmp_fh;
+
+    # Build and execute lastz command
+    my $output_file = File::Spec->catfile($output_dir, "seeALN_$name.lz");
+    my $myLASTZ = "$lastZ_tool $tmp_fh->filename $qfile --output=$output_file $param";
+    system($myLASTZ) == 0 or die "Error running lastz on $name: $!";
+    $logger->info("lastz completed for $name, output saved to $output_file.");
 }
 
-#Read config files
+# Locate lastz in the system path
+sub locateLastz {
+    my $lastZ_tool = "lastz";
+    my $tool_path = '';
+    my $found = 0;
+
+    # Check if 'lastz' exists in the current directory (./)
+    if (-f "./$lastZ_tool" && -x "./$lastZ_tool") {
+        $logger->info("'$lastZ_tool' found in the current directory.");
+        $tool_path = "./$lastZ_tool";
+        $found = 1;
+    } else {
+        # If not found in the current directory, search in system's PATH
+        for my $path (split /:/, $ENV{PATH}) {
+            if (-f "$path/$lastZ_tool" && -x "$path/$lastZ_tool") {
+                $logger->info("'$lastZ_tool' found in $path");
+                $tool_path = "$path/$lastZ_tool";
+                $found = 1;
+                last;
+            }
+        }
+    }
+
+    return $tool_path if $found;
+    die "No '$lastZ_tool' command found in the current directory or system's PATH.\nTry installing it using conda: 'conda install -c bioconda lastz'\n";
+}
+
+# Convert sequences to uppercase
+sub convertToUpperCase {
+    my ($infile, $outfile) = @_;
+    open my $in_fh, '<', $infile or die "Cannot open input file $infile: $!";
+    open my $out_fh, '>', $outfile or die "Cannot open output file $outfile: $!";
+
+    while (<$in_fh>) {
+        print $out_fh uc($_);
+    }
+
+    close $in_fh;
+    close $out_fh;
+}
+
+# Read config file
 sub readConfig {
-my ($file) = @_;
-my $fh= read_fh($file);
-my @lines;
-while (<$fh>) {
-    chomp;
-    next if /^#/;
-    next if /^$/;
-    $_ =~ s/^\s+|\s+$//g;
-    if (index($_, 'multiple') != -1) { print "$_ contains 'multiple' settings.\n which is not allowed in parallelLastz\n"; exit;}
-    push @lines, $_;
-}
-close $fh or die "Cannot close $file: $!";
-return \@lines;
-}
+    my ($file) = @_;
+    open my $fh, '<', $file or die "Cannot open config file $file: $!";
+    my @lines;
 
-#Open and Read a file
-sub read_fh {
-my $filename = shift @_;
-my $filehandle;
-    if ($filename =~ /gz$/) {
-        open $filehandle, "gunzip -dc $filename |" or die $!;
+    while (<$fh>) {
+        chomp;
+        next if /^#/ || /^\s*$/;
+        push @lines, $_;
     }
-    else {
-        open $filehandle, "<$filename" or die $!;
+
+    close $fh;
+    return \@lines;
+}
+
+# Clean up intermediate files
+sub cleanUpIntermediateFiles {
+    my ($output_dir) = @_;
+    my @files = glob(File::Spec->catfile($output_dir, '*.lz'));
+
+    # Avoid using a large number of files with `cat` directly
+    my $final_output = File::Spec->catfile($output_dir, 'finalAlign.tsv');
+
+    open my $out_fh, '>', $final_output or die "Cannot open final output file $final_output: $!";
+
+    for my $file (@files) {
+        open my $in_fh, '<', $file or die "Cannot open file $file: $!";
+        while (<$in_fh>) {
+            print $out_fh $_;
+        }
+        close $in_fh;
+        unlink $file; # Remove the intermediate file after processing
     }
-    return $filehandle;
+
+    close $out_fh;
 }
 
-#Open and Read a file
-sub write_fh {
-my $filename = shift @_;
-my $filehandle;
-    if ($filename =~ /gz$/) {
-        open $filehandle, "gunzip -dc $filename |" or die $!;
-    }
-    else {
-        open $filehandle, ">$filename" or die $!;
-    }
-    return $filehandle;
-}
-
-
-#Read config files
-sub convertUC {
-my ($infile, $outfile) = @_;
-my $fh= read_fh($infile);
-my $ofh= write_fh($outfile);
-while (<$fh>) {
-    #chomp;
-    next if /^#/;
-    next if /^$/;
-    #$_ =~ s/^\s+|\s+$//g;
-    print $ofh uc($_);
-}
-close $fh or die "Cannot close $infile: $!";
-close $ofh or die "Cannot close $outfile: $!";
-}
-
-#Help section
-sub help {
-my $ver = $_[0];
-  print "\n parallelLastz $ver\n\n";
-
-  print "Usage: $0 --qfile <> --tfile <> --cfile <> --speedup <#> \n\n";
-  print	"Options:\n";
-  print "   --qfile|-q      query multifasta/fasta file\n";
-  print "   --tfile|-t      target genome file\n";
-  print "   --cfile|-c      config file\n";
-  print "   --speedup|-s    number of core to use\n";
-  print "   --length|-l     length below this is ignored\n";
-  print "   --unmask|-u     unmask the lowercase in t and q file\n";
-  print "   --wipe|-w       wipe out the intermediate files\n";
-  print "   --help|-h       brief help message\n";
-
-exit;
-}
