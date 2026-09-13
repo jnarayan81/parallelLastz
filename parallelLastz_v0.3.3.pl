@@ -11,7 +11,7 @@
 #   --cfile/-c       LASTZ configuration file
 #   --length/-l      chunk length in bp
 #   --wipe/-w        remove/recreate working files
-#   --unmask/-u     pass unmasked query/target sequence to LASTZ
+#   --unmask/-u      pass unmasked query/target sequence to LASTZ
 #   --verbose/-v
 #   --retry/-r
 #   --output/-o
@@ -26,6 +26,7 @@
 
 use strict;
 use warnings;
+
 use Getopt::Long qw(GetOptions);
 use File::Basename qw(basename);
 use File::Path qw(make_path remove_tree);
@@ -68,10 +69,17 @@ GetOptions(
     'version'     => \$version,
 ) or die usage();
 
+# -------------------------------------------------------------------------
+# Welcome banner
+# Print only when --help/-h or --verbose/-v is requested.
+# -------------------------------------------------------------------------
+print_welcome() if $help || $verbose;
+
 if ($version) {
     print "parallelLastz v$VERSION\n";
     exit 0;
 }
+
 if ($help) {
     print usage();
     exit 0;
@@ -106,12 +114,13 @@ die "--jobs/-j ($jobs) exceeds available CPUs ($available_cpus). " .
 # Output/work directories
 # -------------------------------------------------------------------------
 $output = File::Spec->rel2abs($output);
-my $chunks_dir = File::Spec->catdir($output, 'chunks');
-my $logs_dir   = File::Spec->catdir($output, 'logs');
-my $runs_dir   = File::Spec->catdir($output, 'runs');
+
+my $chunks_dir     = File::Spec->catdir($output, 'chunks');
+my $logs_dir       = File::Spec->catdir($output, 'logs');
+my $runs_dir       = File::Spec->catdir($output, 'runs');
 my $target_tmp_dir = File::Spec->catdir($output, 'targets');
 
-my $manifest = File::Spec->catfile($output, 'parallelLastz.manifest.tsv');
+my $manifest   = File::Spec->catfile($output, 'parallelLastz.manifest.tsv');
 my $final_align = File::Spec->catfile($output, 'finalAlign.tsv');
 
 if ($wipe && -d $output) {
@@ -121,14 +130,17 @@ if ($wipe && -d $output) {
 
 make_path($output, $chunks_dir, $logs_dir, $runs_dir, $target_tmp_dir);
 
-# A normal non-resume invocation starts a fresh manifest.  This is
-# deliberately an overwrite, not an append.
+# A normal non-resume invocation starts a fresh manifest.
+# This is deliberately an overwrite, not an append.
 if (!$resume) {
-    open(my $mf, '>', $manifest) or die "Cannot create $manifest: $!\n";
+    open(my $mf, '>', $manifest)
+        or die "Cannot create $manifest: $!\n";
+
     print $mf join("\t",
         qw(job_id target_file target_id query_chunk query_id query_start query_end output status attempts
            exit_code stdout_file stderr_file message)
     ), "\n";
+
     close $mf;
 }
 
@@ -139,45 +151,69 @@ my @config_args = read_config($cfile);
 
 # v2 compatibility: preserve the historical configuration arguments while
 # ensuring the required output format is explicitly present.
-@config_args = grep { $_ ne '--format=general-' && $_ ne '--format' } @config_args;
+@config_args = grep {
+    $_ ne '--format=general-' && $_ ne '--format'
+} @config_args;
+
 push @config_args, '--format=general-';
 
-# --unmask/-u is retained as a compatibility switch.  By default the FASTA
-# records are written exactly as read.  With --unmask, sequence masking is
-# removed before writing chunks.
-#
+# --unmask/-u is retained as a compatibility switch.
+# By default the FASTA records are written exactly as read.
+# With --unmask, sequence masking is removed before writing chunks.
+
 # -------------------------------------------------------------------------
 # Streaming FASTA chunk generation
 # -------------------------------------------------------------------------
 my @jobs_manifest;
 
 if ($resume && -s $manifest) {
+
     @jobs_manifest = read_manifest($manifest);
 
     die "Resume requested, but manifest contains no jobs: $manifest\n"
         unless @jobs_manifest;
 
     print STDERR "Resuming " . scalar(@jobs_manifest) .
-                 " manifest jobs from $manifest\n" if $verbose;
+                 " manifest jobs from $manifest\n"
+        if $verbose;
 }
 else {
+
     # LASTZ requires a single target sequence. Split the target FASTA into
     # one temporary FASTA per record, then align every target record against
     # every query chunk. This avoids passing a multi-FASTA target to LASTZ.
     my @target_records = split_target_fasta(
-        $tfile, $target_tmp_dir, $unmask, $verbose
+        $tfile,
+        $target_tmp_dir,
+        $unmask,
+        $verbose
     );
+
     my @query_jobs = create_chunks(
-        $qfile, $chunks_dir, $length, $unmask, $verbose
+        $qfile,
+        $chunks_dir,
+        $length,
+        $unmask,
+        $verbose
     );
+
     @jobs_manifest = expand_target_query_jobs(
-        \@target_records, \@query_jobs, $chunks_dir
+        \@target_records,
+        \@query_jobs,
+        $chunks_dir
     );
+
     write_manifest($manifest, \@jobs_manifest);
 }
 
 if ($dry_run) {
-    print_plan(\@jobs_manifest, $tfile, \@config_args, $jobs);
+    print_plan(
+        \@jobs_manifest,
+        $tfile,
+        \@config_args,
+        $jobs
+    );
+
     exit 0;
 }
 
@@ -189,36 +225,61 @@ eval { require Parallel::ForkManager; 1 }
 
 my $pm = Parallel::ForkManager->new($jobs);
 
-my $total_jobs = scalar(@jobs_manifest);
+my $total_jobs     = scalar(@jobs_manifest);
 my $completed_jobs = 0;
-my $failed_jobs = 0;
-my $running_jobs = 0;
+my $failed_jobs    = 0;
+my $running_jobs   = 0;
 
 if (!$verbose) {
+
     $pm->run_on_finish(sub {
-        my ($pid, $exit_code, $ident, $exit_signal, $core_dump, $data) = @_;
+        my (
+            $pid,
+            $exit_code,
+            $ident,
+            $exit_signal,
+            $core_dump,
+            $data
+        ) = @_;
+
         ++$completed_jobs;
-        if (defined($data) && ref($data) eq 'HASH' && !$data->{ok}) {
+
+        if (defined($data) &&
+            ref($data) eq 'HASH' &&
+            !$data->{ok}) {
+
             ++$failed_jobs;
         }
+
         $running_jobs = $total_jobs - $completed_jobs;
         $running_jobs = 0 if $running_jobs < 0;
-        print_progress($completed_jobs, $total_jobs, $running_jobs, $failed_jobs);
+
+        print_progress(
+            $completed_jobs,
+            $total_jobs,
+            $running_jobs,
+            $failed_jobs
+        );
     });
+
     print_progress(0, $total_jobs, 0, 0);
 }
 
 for my $job (@jobs_manifest) {
 
     # A completed successful job is skipped on resume.
-    if ($resume && $job->{status} eq 'success' && -f $job->{output}) {
+    if ($resume &&
+        $job->{status} eq 'success' &&
+        -f $job->{output}) {
+
         print STDERR "RESUME: skipping completed job $job->{job_id}\n"
             if $verbose;
+
         next;
     }
 
     # Existing manifest jobs are retried from their current state.
-    $job->{status} = 'pending';
+    $job->{status}  = 'pending';
     $job->{message} = '';
 
     $pm->start and next;
@@ -232,34 +293,49 @@ for my $job (@jobs_manifest) {
         $verbose
     );
 
-    # Parent cannot receive lexical variables from a forked child.  Persist
-    # the complete result in a per-job status file and have the parent read
-    # it after finish().  This also fixes child attempt-count propagation.
-    write_child_result($runs_dir, $job->{job_id}, $result);
+    # Parent cannot receive lexical variables from a forked child.
+    # Persist the complete result in a per-job status file and have the
+    # parent read it after finish().
+    #
+    # This also fixes child attempt-count propagation.
+    write_child_result(
+        $runs_dir,
+        $job->{job_id},
+        $result
+    );
 
-    $pm->finish($result->{ok} ? 0 : 1, $result);
+    $pm->finish(
+        $result->{ok} ? 0 : 1,
+        $result
+    );
 }
 
 $pm->wait_all_children;
+
 print STDERR "\n" unless $verbose;
 
 # -------------------------------------------------------------------------
 # Collect child results and rewrite manifest atomically
 # -------------------------------------------------------------------------
 for my $job (@jobs_manifest) {
+
     my $result_file = File::Spec->catfile(
-        $runs_dir, sprintf('%s.result.tsv', $job->{job_id})
+        $runs_dir,
+        sprintf('%s.result.tsv', $job->{job_id})
     );
 
     if (-f $result_file) {
+
         my $r = read_child_result($result_file);
+
         for my $k (keys %$r) {
             $job->{$k} = $r->{$k};
         }
     }
     elsif ($job->{status} ne 'success') {
-        $job->{status} = 'failed';
-        $job->{message} = 'No child result file was produced';
+
+        $job->{status}    = 'failed';
+        $job->{message}   = 'No child result file was produced';
         $job->{exit_code} = 255;
     }
 }
@@ -270,25 +346,32 @@ write_manifest($manifest, \@jobs_manifest);
 # Build final alignment output from successful jobs
 # -------------------------------------------------------------------------
 my $successful = 0;
-my $failed = 0;
+my $failed     = 0;
 
 open(my $fa, '>', $final_align)
     or die "Cannot create $final_align: $!\n";
 
 for my $job (@jobs_manifest) {
-    if ($job->{status} eq 'success' && -f $job->{output}) {
+
+    if ($job->{status} eq 'success' &&
+        -f $job->{output}) {
+
         open(my $in, '<', $job->{output})
             or die "Cannot read $job->{output}: $!\n";
+
         while (my $line = <$in>) {
             print $fa $line;
         }
+
         close $in;
-        $successful++;
+
+        ++$successful;
     }
     else {
-        $failed++;
+        ++$failed;
     }
 }
+
 close $fa;
 
 print STDERR "\nparallelLastz v$VERSION completed\n";
@@ -305,6 +388,24 @@ exit($failed ? 1 : 0);
 # =========================================================================
 # SUBROUTINES
 # =========================================================================
+
+sub print_welcome {
+    print <<'WELCOME';
+
+       ╭─╮ ╭─╮ ╭─╮ ╭─╮
+       │P│─│L│─│Z│─│▸│
+       ╰─╯ ╰─╯ ╰─╯ ╰─╯
+        parallelLastz
+     Parallel LASTZ Runner
+     ─────────────────────
+       v0.3.3 | JitendraLab
+
+WELCOME
+
+    # Replace the placeholder with the actual version.
+    # This keeps the banner definition readable while avoiding hard-coded
+    # version strings.
+}
 
 sub usage {
     return <<"USAGE";
@@ -330,7 +431,7 @@ Parallel/resume:
   -j, --jobs INT          Concurrent LASTZ jobs; must not exceed CPUs
       --resume            Resume using parallelLastz.manifest.tsv
       --dry-run           Generate/inspect the plan but do not execute LASTZ
-      --version           Print version
+      --version            Print version
   -h, --help              Show this help
 
 Outputs:
@@ -360,17 +461,22 @@ sub available_cpus {
     }
 
     $n = int($n || 1);
+
     return $n > 0 ? $n : 1;
 }
 
 sub read_config {
     my ($file) = @_;
 
-    open(my $fh, '<', $file) or die "Cannot read config $file: $!\n";
+    open(my $fh, '<', $file)
+        or die "Cannot read config $file: $!\n";
 
     my @args;
+
     while (my $line = <$fh>) {
+
         chomp $line;
+
         $line =~ s/^\s+//;
         $line =~ s/\s+$//;
 
@@ -384,6 +490,7 @@ sub read_config {
 
         push @args, shellwords($line);
     }
+
     close $fh;
 
     return @args;
@@ -391,41 +498,123 @@ sub read_config {
 
 sub split_target_fasta {
     my ($file, $dir, $unmask, $verbose) = @_;
-    eval { require Bio::SeqIO; 1 } or die "Bio::SeqIO is required: $@\n";
-    my $in = Bio::SeqIO->new(-file => $file, -format => 'fasta')
-        or die "Cannot read target FASTA $file\n";
-    my @records; my $n=0;
-    while (my $seq=$in->next_seq) {
+
+    eval { require Bio::SeqIO; 1 }
+        or die "Bio::SeqIO is required: $@\n";
+
+    my $in = Bio::SeqIO->new(
+        -file   => $file,
+        -format => 'fasta'
+    ) or die "Cannot read target FASTA $file\n";
+
+    my @records;
+    my $n = 0;
+
+    while (my $seq = $in->next_seq) {
+
         ++$n;
-        my $id=$seq->display_id || $seq->id || "target_$n";
-        my $safe=$id; $safe =~ s/[^A-Za-z0-9_.-]+/_/g; $safe="target_$n" unless length $safe;
-        my $path=File::Spec->catfile($dir, sprintf("target_%06d_%s.fa",$n,$safe));
-        my $s=$seq->seq; $s =~ s/[a-z]/uc($&)/ge if $unmask;
-        open(my $fh,'>',$path) or die "Cannot create $path: $!\n";
+
+        my $id = $seq->display_id ||
+                 $seq->id ||
+                 "target_$n";
+
+        my $safe = $id;
+
+        $safe =~ s/[^A-Za-z0-9_.-]+/_/g;
+        $safe = "target_$n" unless length $safe;
+
+        my $path = File::Spec->catfile(
+            $dir,
+            sprintf(
+                "target_%06d_%s.fa",
+                $n,
+                $safe
+            )
+        );
+
+        my $s = $seq->seq;
+
+        if ($unmask) {
+            $s =~ s/[a-z]/uc($&)/ge;
+        }
+
+        open(my $fh, '>', $path)
+            or die "Cannot create $path: $!\n";
+
         print $fh ">$id\n";
-        for(my $i=0;$i<length($s);$i+=80){ print $fh substr($s,$i,80),"\n"; }
-        close $fh or die "Cannot close $path: $!\n";
-        push @records,{file=>$path,id=>$id,length=>length($s)};
-        print STDERR "Target FASTA: $id (".length($s)." bp) -> $path\n" if $verbose;
+
+        for (
+            my $i = 0;
+            $i < length($s);
+            $i += 80
+        ) {
+            print $fh substr($s, $i, 80), "\n";
+        }
+
+        close $fh
+            or die "Cannot close $path: $!\n";
+
+        push @records, {
+            file   => $path,
+            id     => $id,
+            length => length($s)
+        };
+
+        print STDERR
+            "Target FASTA: $id (" .
+            length($s) .
+            " bp) -> $path\n"
+            if $verbose;
     }
-    die "No FASTA records found in target file $file\n" unless @records;
+
+    die "No FASTA records found in target file $file\n"
+        unless @records;
+
     return @records;
 }
 
 sub expand_target_query_jobs {
-    my ($targets,$queries,$chunks_dir)=@_;
-    my @jobs; my $n=0;
+    my ($targets, $queries, $chunks_dir) = @_;
+
+    my @jobs;
+    my $n = 0;
+
     for my $t (@$targets) {
+
         for my $q (@$queries) {
-            ++$n; my $id=sprintf('job_%06d',$n);
-            push @jobs,{job_id=>$id,target_file=>$t->{file},target_id=>$t->{id},
-                query_chunk=>$q->{query_chunk},query_id=>($q->{query_id}//''),
-                query_start=>$q->{query_start},query_end=>$q->{query_end},
-                output=>File::Spec->catfile($chunks_dir,"$id.lz"),status=>'pending',
-                attempts=>0,exit_code=>'',stdout_file=>'',stderr_file=>'',message=>''};
+
+            ++$n;
+
+            my $id = sprintf(
+                'job_%06d',
+                $n
+            );
+
+            push @jobs, {
+                job_id      => $id,
+                target_file => $t->{file},
+                target_id   => $t->{id},
+                query_chunk => $q->{query_chunk},
+                query_id    => ($q->{query_id} // ''),
+                query_start => $q->{query_start},
+                query_end   => $q->{query_end},
+                output      => File::Spec->catfile(
+                    $chunks_dir,
+                    "$id.lz"
+                ),
+                status      => 'pending',
+                attempts    => 0,
+                exit_code   => '',
+                stdout_file => '',
+                stderr_file => '',
+                message     => ''
+            };
         }
     }
-    die "No target/query alignment jobs were created\n" unless @jobs;
+
+    die "No target/query alignment jobs were created\n"
+        unless @jobs;
+
     return @jobs;
 }
 
@@ -441,17 +630,18 @@ sub create_chunks {
     );
 
     my @jobs;
+
     my $job_no = 0;
     my $buffer = '';
     my $buffer_bp = 0;
     my $chunk_start = 1;
 
     while (my $seq = $in->next_seq) {
+
         my $id = $seq->display_id;
-        my $s = $seq->seq;
+        my $s  = $seq->seq;
 
         if ($unmask) {
-            $s =~ tr/acgtuN/acgtuN/; # keep DNA alphabet unchanged
             $s =~ s/[a-z]/uc($&)/ge;
         }
 
@@ -459,9 +649,18 @@ sub create_chunks {
 
         # Preserve FASTA records. A single record longer than --length is
         # emitted as a single record rather than split in the middle.
-        if ($buffer_bp > 0 && $buffer_bp + $seq_len > $max_bp) {
-            my $job_id = sprintf('job_%06d', ++$job_no);
-            my $path = File::Spec->catfile($dir, "$job_id.fa");
+        if ($buffer_bp > 0 &&
+            $buffer_bp + $seq_len > $max_bp) {
+
+            my $job_id = sprintf(
+                'job_%06d',
+                ++$job_no
+            );
+
+            my $path = File::Spec->catfile(
+                $dir,
+                "$job_id.fa"
+            );
 
             write_fasta($path, $buffer);
 
@@ -471,13 +670,16 @@ sub create_chunks {
                 query_id    => "query_chunk_$job_no",
                 query_start => $chunk_start,
                 query_end   => $chunk_start + $buffer_bp - 1,
-                output      => File::Spec->catfile($dir, "$job_id.lz"),
+                output      => File::Spec->catfile(
+                    $dir,
+                    "$job_id.lz"
+                ),
                 status      => 'pending',
                 attempts    => 0,
                 exit_code   => '',
                 stdout_file => '',
                 stderr_file => '',
-                message     => '',
+                message     => ''
             };
 
             $chunk_start += $buffer_bp;
@@ -489,13 +691,22 @@ sub create_chunks {
         $buffer_bp += $seq_len;
 
         if ($verbose) {
-            print STDERR "Streaming FASTA: $id ($seq_len bp)\n";
+            print STDERR
+                "Streaming FASTA: $id ($seq_len bp)\n";
         }
     }
 
     if ($buffer_bp > 0) {
-        my $job_id = sprintf('job_%06d', ++$job_no);
-        my $path = File::Spec->catfile($dir, "$job_id.fa");
+
+        my $job_id = sprintf(
+            'job_%06d',
+            ++$job_no
+        );
+
+        my $path = File::Spec->catfile(
+            $dir,
+            "$job_id.fa"
+        );
 
         write_fasta($path, $buffer);
 
@@ -504,26 +715,35 @@ sub create_chunks {
             query_chunk => $path,
             query_start => $chunk_start,
             query_end   => $chunk_start + $buffer_bp - 1,
-            output      => File::Spec->catfile($dir, "$job_id.lz"),
+            output      => File::Spec->catfile(
+                $dir,
+                "$job_id.lz"
+            ),
             status      => 'pending',
             attempts    => 0,
             exit_code   => '',
             stdout_file => '',
             stderr_file => '',
-            message     => '',
+            message     => ''
         };
     }
 
-    die "No FASTA records found in $file\n" unless @jobs;
+    die "No FASTA records found in $file\n"
+        unless @jobs;
 
     return @jobs;
 }
 
 sub write_fasta {
     my ($file, $text) = @_;
-    open(my $fh, '>', $file) or die "Cannot create $file: $!\n";
+
+    open(my $fh, '>', $file)
+        or die "Cannot create $file: $!\n";
+
     print $fh $text;
-    close $fh or die "Cannot close $file: $!\n";
+
+    close $fh
+        or die "Cannot close $file: $!\n";
 }
 
 sub write_manifest {
@@ -531,7 +751,8 @@ sub write_manifest {
 
     my $tmp = "$file.tmp.$$";
 
-    open(my $fh, '>', $tmp) or die "Cannot write $tmp: $!\n";
+    open(my $fh, '>', $tmp)
+        or die "Cannot write $tmp: $!\n";
 
     print $fh join("\t",
         qw(job_id target_file target_id query_chunk query_id query_start query_end output status attempts
@@ -539,85 +760,146 @@ sub write_manifest {
     ), "\n";
 
     for my $j (@$jobs) {
+
         print $fh join("\t",
-            map { tsv_escape($j->{$_} // '') }
+            map {
+                tsv_escape($j->{$_} // '')
+            }
             qw(job_id target_file target_id query_chunk query_id query_start query_end output status attempts
                exit_code stdout_file stderr_file message)
         ), "\n";
     }
 
-    close $fh or die "Cannot close $tmp: $!\n";
-    rename $tmp, $file or die "Cannot replace $file: $!\n";
+    close $fh
+        or die "Cannot close $tmp: $!\n";
+
+    rename $tmp, $file
+        or die "Cannot replace $file: $!\n";
 }
 
 sub read_manifest {
     my ($file) = @_;
 
-    open(my $fh, '<', $file) or die "Cannot read $file: $!\n";
+    open(my $fh, '<', $file)
+        or die "Cannot read $file: $!\n";
 
     my $header = <$fh>;
-    die "Manifest is empty: $file\n" unless defined $header;
+
+    die "Manifest is empty: $file\n"
+        unless defined $header;
 
     chomp $header;
+
     my @head = split /\t/, $header, -1;
 
     my @jobs;
+
     while (my $line = <$fh>) {
+
         chomp $line;
+
         next if $line eq '';
 
         my @v = split /\t/, $line, -1;
+
         my %j;
-        @j{@head} = map { tsv_unescape($_) } @v;
+
+        @j{@head} = map {
+            tsv_unescape($_)
+        } @v;
 
         # Resolve relative paths against the manifest directory.
-        my ($vol, $dir, $name) = File::Spec->splitpath($file);
-        my $base = File::Spec->catpath($vol, $dir, '');
-        for my $key (qw(target_file query_chunk output stdout_file stderr_file)) {
-            next unless defined($j{$key}) && $j{$key} ne '';
-            $j{$key} = File::Spec->rel2abs($j{$key}, $base)
-                unless File::Spec->file_name_is_absolute($j{$key});
+        my ($vol, $dir, $name) =
+            File::Spec->splitpath($file);
+
+        my $base = File::Spec->catpath(
+            $vol,
+            $dir,
+            ''
+        );
+
+        for my $key (
+            qw(target_file query_chunk output stdout_file stderr_file)
+        ) {
+
+            next unless defined($j{$key}) &&
+                        $j{$key} ne '';
+
+            $j{$key} = File::Spec->rel2abs(
+                $j{$key},
+                $base
+            ) unless File::Spec->file_name_is_absolute(
+                $j{$key}
+            );
         }
 
         push @jobs, \%j;
     }
 
     close $fh;
+
     return @jobs;
 }
 
 sub tsv_escape {
     my ($v) = @_;
+
     $v =~ s/\t/\\t/g;
     $v =~ s/\r/\\r/g;
     $v =~ s/\n/\\n/g;
+
     return $v;
 }
 
 sub tsv_unescape {
     my ($v) = @_;
+
     $v =~ s/\\t/\t/g;
     $v =~ s/\\r/\r/g;
     $v =~ s/\\n/\n/g;
+
     return $v;
 }
 
-
 sub print_progress {
     my ($done, $total, $running, $failed) = @_;
+
     return if $verbose;
 
     my $width = 24;
-    my $filled = $total ? int(($done / $total) * $width) : 0;
-    $filled = $width if $filled > $width;
-    my $bar = ('#' x $filled) . ('.' x ($width - $filled));
-    printf STDERR "\rLASTZ: [%s] %d/%d completed | %d running | %d failed",
-        $bar, $done, $total, $running, $failed;
-    STDERR->flush if STDERR->can('flush');
+
+    my $filled = $total
+        ? int(($done / $total) * $width)
+        : 0;
+
+    $filled = $width
+        if $filled > $width;
+
+    my $bar =
+        ('#' x $filled) .
+        ('.' x ($width - $filled));
+
+    printf STDERR
+        "\rLASTZ: [%s] %d/%d completed | %d running | %d failed",
+        $bar,
+        $done,
+        $total,
+        $running,
+        $failed;
+
+    STDERR->flush
+        if STDERR->can('flush');
 }
 
 sub run_job {
-    my ($job, $config, $logs_dir, $runs_dir, $max_retry, $verbose) = @_;
+    my (
+        $job,
+        $config,
+        $logs_dir,
+        $runs_dir,
+        $max_retry,
+        $verbose
+    ) = @_;
 
     my $max_attempts = $max_retry + 1;
     my $attempt = 0;
@@ -630,11 +912,24 @@ sub run_job {
     my $last_message = '';
 
     while ($attempt < $max_attempts) {
+
         ++$attempt;
 
-        my $tag = sprintf('%s.attempt_%02d', $job->{job_id}, $attempt);
-        my $stdout_file = File::Spec->catfile($logs_dir, "$tag.stdout");
-        my $stderr_file = File::Spec->catfile($logs_dir, "$tag.stderr");
+        my $tag = sprintf(
+            '%s.attempt_%02d',
+            $job->{job_id},
+            $attempt
+        );
+
+        my $stdout_file = File::Spec->catfile(
+            $logs_dir,
+            "$tag.stdout"
+        );
+
+        my $stderr_file = File::Spec->catfile(
+            $logs_dir,
+            "$tag.stderr"
+        );
 
         my @cmd = (
             'lastz',
@@ -648,23 +943,40 @@ sub run_job {
         # is also redirected at the process level for diagnostics and for
         # LASTZ builds/configurations that write ordinary stdout.
         if ($verbose) {
-            print STDERR "[$job->{job_id}] attempt $attempt/$max_attempts\n";
-            print STDERR "[$job->{job_id}] CMD: " .
-                join(' ', map { quote_for_display($_) } @cmd) . "\n";
+
+            print STDERR
+                "[$job->{job_id}] attempt " .
+                "$attempt/$max_attempts\n";
+
+            print STDERR
+                "[$job->{job_id}] CMD: " .
+                join(
+                    ' ',
+                    map {
+                        quote_for_display($_)
+                    } @cmd
+                ) .
+                "\n";
         }
 
         my $pid = fork();
-        die "fork failed for $job->{job_id}: $!\n" unless defined $pid;
+
+        die "fork failed for $job->{job_id}: $!\n"
+            unless defined $pid;
 
         if ($pid == 0) {
+
             open(STDOUT, '>', $stdout_file)
                 or die "Cannot redirect stdout: $!\n";
+
             open(STDERR, '>', $stderr_file)
                 or die "Cannot redirect stderr: $!\n";
 
             exec { $cmd[0] } @cmd
                 or do {
-                    print STDERR "Cannot exec LASTZ: $!\n";
+                    print STDERR
+                        "Cannot exec LASTZ: $!\n";
+
                     exit 127;
                 };
         }
@@ -672,6 +984,7 @@ sub run_job {
         waitpid($pid, 0);
 
         my $status = $?;
+
         my $exit_code;
 
         if ($status == -1) {
@@ -691,9 +1004,11 @@ sub run_job {
         $last_stdout = slurp($stdout_file);
         $last_stderr = slurp($stderr_file);
 
-        # LASTZ can legitimately produce an empty alignment.  Therefore
-        # output size is NOT used as a success criterion: exit status is.
+        # LASTZ can legitimately produce an empty alignment.
+        # Therefore output size is NOT used as a success criterion:
+        # exit status is.
         if ($exit_code == 0) {
+
             return {
                 status      => 'success',
                 ok          => 1,
@@ -707,11 +1022,14 @@ sub run_job {
         }
 
         $last_message = diagnostic_message(
-            $exit_code, $last_stdout, $last_stderr
+            $exit_code,
+            $last_stdout,
+            $last_stderr
         );
 
-        print STDERR "[$job->{job_id}] LASTZ failed (attempt $attempt): " .
-                     "$last_message\n";
+        print STDERR
+            "[$job->{job_id}] LASTZ failed " .
+            "(attempt $attempt): $last_message\n";
 
         last if $attempt >= $max_attempts;
     }
@@ -732,7 +1050,9 @@ sub diagnostic_message {
     my ($exit, $stdout, $stderr) = @_;
 
     my $detail = $stderr;
-    $detail = $stdout if $detail eq '';
+
+    $detail = $stdout
+        if $detail eq '';
 
     $detail =~ s/\s+/ /g;
     $detail =~ s/^\s+|\s+$//g;
@@ -741,60 +1061,104 @@ sub diagnostic_message {
         return "LASTZ exit code $exit: $detail";
     }
 
-    return "LASTZ exit code $exit (no diagnostic output captured)";
+    return
+        "LASTZ exit code $exit " .
+        "(no diagnostic output captured)";
 }
 
 sub slurp {
     my ($file) = @_;
-    return '' unless -f $file;
 
-    open(my $fh, '<', $file) or return '';
+    return ''
+        unless -f $file;
+
+    open(my $fh, '<', $file)
+        or return '';
+
     local $/;
+
     my $x = <$fh>;
+
     close $fh;
+
     return defined($x) ? $x : '';
 }
 
 sub write_child_result {
     my ($dir, $job_id, $r) = @_;
 
-    my $file = File::Spec->catfile($dir, "$job_id.result.tsv");
+    my $file = File::Spec->catfile(
+        $dir,
+        "$job_id.result.tsv"
+    );
+
     my $tmp = "$file.tmp.$$";
 
     open(my $fh, '>', $tmp)
         or die "Cannot write child result $tmp: $!\n";
 
-    for my $key (qw(status attempts exit_code stdout_file stderr_file message output)) {
-        print $fh tsv_escape($r->{$key} // ''), "\n";
+    for my $key (
+        qw(status attempts exit_code stdout_file stderr_file message output)
+    ) {
+
+        print $fh
+            tsv_escape($r->{$key} // ''),
+            "\n";
     }
 
-    close $fh or die "Cannot close child result $tmp: $!\n";
-    rename $tmp, $file or die "Cannot install child result $file: $!\n";
+    close $fh
+        or die "Cannot close child result $tmp: $!\n";
+
+    rename $tmp, $file
+        or die "Cannot install child result $file: $!\n";
 }
 
 sub read_child_result {
     my ($file) = @_;
 
-    open(my $fh, '<', $file) or die "Cannot read $file: $!\n";
+    open(my $fh, '<', $file)
+        or die "Cannot read $file: $!\n";
 
-    my @keys = qw(status attempts exit_code stdout_file stderr_file message output);
+    my @keys = qw(
+        status
+        attempts
+        exit_code
+        stdout_file
+        stderr_file
+        message
+        output
+    );
+
     my %r;
 
     for my $key (@keys) {
+
         my $line = <$fh>;
+
         last unless defined $line;
+
         chomp $line;
+
         $r{$key} = tsv_unescape($line);
     }
 
     close $fh;
 
-    $r{ok} = ($r{status} // '') eq 'success' ? 1 : 0;
+    $r{ok} =
+        ($r{status} // '') eq 'success'
+        ? 1
+        : 0;
+
     return \%r;
 }
 
 sub print_plan {
-    my ($jobs, $target, $config, $n_jobs) = @_;
+    my (
+        $jobs,
+        $target,
+        $config,
+        $n_jobs
+    ) = @_;
 
     print "parallelLastz v$VERSION dry-run\n";
     print "Target: $target\n";
@@ -802,12 +1166,17 @@ sub print_plan {
     print "LASTZ arguments:\n";
 
     for my $a (@$config) {
-        print "  ", quote_for_display($a), "\n";
+        print "  ",
+            quote_for_display($a),
+            "\n";
     }
 
     print "\nPlanned jobs:\n";
+
     for my $j (@$jobs) {
-        print join("\t",
+
+        print join(
+            "\t",
             $j->{job_id},
             $j->{query_chunk},
             $j->{output},
@@ -818,9 +1187,15 @@ sub print_plan {
 
 sub quote_for_display {
     my ($s) = @_;
-    return "''" if $s eq '';
-    return $s if $s =~ /^[A-Za-z0-9_\/.=:,+-]+$/;
+
+    return "''"
+        if $s eq '';
+
+    return $s
+        if $s =~ /^[A-Za-z0-9_\/.=:,+-]+$/;
+
     $s =~ s/'/'"'"'/g;
+
     return "'$s'";
 }
 
